@@ -3,13 +3,25 @@ using System.IO.Ports;
 
 public class BioDataReader : MonoBehaviour
 {
-    public string portName = "COM3";
+    [Header("Port szeregowy")]
+    public string portName = "COM5";
     public int baudRate = 115200;
 
     private SerialPort _port;
 
-    [Range(0, 1)] public float gsrNormalized;
-    [Range(0, 1)] public float breathNormalized;
+    [Header("Dane surowe")]
+    public int gsrRaw;
+    public int distRaw;
+
+    [Header("Znormalizowane")]
+    [Range(0f, 1f)] public float gsrNormalized;
+    [Range(0f, 1f)] public float breathNormalized;
+    [Range(-1f, 1f)] public float breathDelta;
+    public bool isInhale;
+
+    // wewnętrzne
+    private float _lastBreathNorm;
+    private float _smoothBreath;
 
     void Start()
     {
@@ -19,51 +31,100 @@ public class BioDataReader : MonoBehaviour
         try
         {
             _port.Open();
+            Debug.Log("BioDataReader: Otwarty port " + portName);
         }
         catch (System.Exception e)
         {
-            Debug.LogError("Nie mogę otworzyć portu: " + e.Message);
+            Debug.LogError("BioDataReader: Nie mogę otworzyć portu " + portName + " - " + e.Message);
         }
     }
 
     void Update()
     {
-        if (_port == null || !_port.IsOpen) return;
+        if (_port == null || !_port.IsOpen)
+            return;
 
         try
         {
-            string line = _port.ReadLine(); //reads data from Arduino
+            string line = _port.ReadLine(); // np. "GSR:523,DIST:37"
             ParseLine(line);
         }
         catch (System.TimeoutException)
         {
-            // No new data after this frame
+            // brak nowych danych w tej klatce – ignorujemy
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning("BioDataReader: błąd odczytu: " + e.Message);
         }
     }
 
     void ParseLine(string line)
     {
-        // Simple parser
+        // Prosty parser CSV: "GSR:xxx,DIST:yyy"
         string[] parts = line.Split(',');
-        int gsrRaw = 0;
-        int distRaw = 0;
+        int gsr = gsrRaw;
+        int dist = distRaw;
 
-        foreach (var p in parts)
+        foreach (string p in parts)
         {
             if (p.StartsWith("GSR:"))
-                int.TryParse(p.Substring(4), out gsrRaw);
+            {
+                int.TryParse(p.Substring(4), out gsr);
+            }
             else if (p.StartsWith("DIST:"))
-                int.TryParse(p.Substring(5), out distRaw);
+            {
+                int.TryParse(p.Substring(5), out dist);
+            }
         }
 
-        // Normalization - values experimental
-        gsrNormalized = Mathf.InverseLerp(300, 800, gsrRaw);   // example???
-        breathNormalized = Mathf.InverseLerp(20, 60, distRaw); // 20-60 centimeters
+        gsrRaw = gsr;
+        distRaw = dist;
+
+        UpdateGsr(gsrRaw);
+        UpdateBreath(distRaw);
+    }
+
+    void UpdateGsr(int raw)
+    {
+        // Zakresy do kalibracji – podejrzyj gsrRaw w Play Mode
+        float norm = Mathf.InverseLerp(300f, 800f, raw);
+        gsrNormalized = Mathf.Clamp01(norm);
+    }
+
+    void UpdateBreath(int rawDist)
+    {
+        if (rawDist <= 0)
+            return;
+
+        // 1. Zawężamy zakres do typowego ruchu klatki (dopasuj do swoich wartości)
+        float raw = Mathf.Clamp(rawDist, 25f, 40f);
+
+        // 2. Mapujemy na 0..1 (0 = bliżej, 1 = dalej)
+        float norm = Mathf.InverseLerp(25f, 40f, raw);
+
+        // 3. Nieliniowa krzywa – zwiększa czułość na końcu zakresu
+        norm = Mathf.Pow(norm, 2.0f);
+
+        // 4. Wygładzanie, żeby nie skakało
+        _smoothBreath = Mathf.Lerp(_smoothBreath, norm, 0.2f);
+
+        // 5. Delta – prędkość zmiany
+        breathDelta = _smoothBreath - _lastBreathNorm;
+
+        // 6. Kierunek oddechu
+        isInhale = breathDelta > 0.001f;
+
+        _lastBreathNorm = _smoothBreath;
+        breathNormalized = Mathf.Clamp01(_smoothBreath);
     }
 
     void OnDestroy()
     {
         if (_port != null && _port.IsOpen)
+        {
             _port.Close();
+            Debug.Log("BioDataReader: Zamknięto port " + portName);
+        }
     }
 }
