@@ -11,7 +11,6 @@ public class PolySynth : MonoBehaviour
         public bool active;
         public float frequency;
         public double phase;
-
         public float amplitude;
         public float targetAmplitude;
     }
@@ -40,30 +39,19 @@ public class PolySynth : MonoBehaviour
     {
         Voice v = null;
         for (int i = 0; i < maxVoices; i++)
-        {
-            if (!_voices[i].active)
-            {
-                v = _voices[i];
-                break;
-            }
-        }
-        if (v == null) v = _voices[0]; // voice stealing
+            if (!_voices[i].active) { v = _voices[i]; break; }
+        if (v == null) v = _voices[0];
 
         v.active = true;
         v.frequency = frequency;
         v.targetAmplitude = 1f;
-        // nie zerujemy phase -> mniej "klików"
     }
 
     public void NoteOff(float frequency)
     {
         for (int i = 0; i < maxVoices; i++)
-        {
             if (_voices[i].active && Mathf.Abs(_voices[i].frequency - frequency) < 0.01f)
-            {
                 _voices[i].targetAmplitude = 0f;
-            }
-        }
     }
 
     public void AllNotesOff()
@@ -77,8 +65,8 @@ public class PolySynth : MonoBehaviour
         int sampleCount = data.Length / channels;
         double dt = 1.0 / _sampleRate;
 
-        float attackCoeff = attackTime > 0f ? (float)(dt / attackTime) : 1f;
-        float releaseCoeff = releaseTime > 0f ? (float)(dt / releaseTime) : 1f;
+        float aC = attackTime > 0f ? (float)(dt / attackTime) : 1f;
+        float rC = releaseTime > 0f ? (float)(dt / releaseTime) : 1f;
 
         for (int n = 0; n < sampleCount; n++)
         {
@@ -86,32 +74,31 @@ public class PolySynth : MonoBehaviour
 
             for (int i = 0; i < maxVoices; i++)
             {
-                var voice = _voices[i];
-                if (!voice.active && voice.amplitude <= 0.0001f) continue;
+                var v = _voices[i];
+                if (!v.active && v.amplitude <= 0.0001f) continue;
 
-                // envelope
-                if (voice.targetAmplitude > voice.amplitude)
+                if (v.targetAmplitude > v.amplitude)
                 {
-                    voice.amplitude += attackCoeff;
-                    if (voice.amplitude > 1f) voice.amplitude = 1f;
+                    v.amplitude += aC;
+                    if (v.amplitude > 1f) v.amplitude = 1f;
                 }
-                else if (voice.targetAmplitude < voice.amplitude)
+                else if (v.targetAmplitude < v.amplitude)
                 {
-                    voice.amplitude -= releaseCoeff;
-                    if (voice.amplitude <= 0f)
+                    v.amplitude -= rC;
+                    if (v.amplitude <= 0f)
                     {
-                        voice.amplitude = 0f;
-                        voice.active = false;
+                        v.amplitude = 0f;
+                        v.active = false;
                     }
                 }
 
-                double inc = 2.0 * Mathf.PI * voice.frequency / _sampleRate;
-                float sample = GenerateWaveSample((float)voice.phase) * voice.amplitude;
+                double inc = 2.0 * Mathf.PI * v.frequency / _sampleRate;
+                float s = GenerateWave((float)v.phase) * v.amplitude;
 
-                mix += sample;
+                mix += s;
 
-                voice.phase += inc;
-                if (voice.phase > 2.0 * Mathf.PI) voice.phase -= 2.0 * Mathf.PI;
+                v.phase += inc;
+                if (v.phase > 2.0 * Mathf.PI) v.phase -= 2.0 * Mathf.PI;
             }
 
             mix *= masterGain;
@@ -122,25 +109,17 @@ public class PolySynth : MonoBehaviour
         }
     }
 
-    float GenerateWaveSample(float phase)
+    float GenerateWave(float phase)
     {
         switch (waveType)
         {
-            case WaveType.Sine:
-                return Mathf.Sin(phase);
-
-            case WaveType.Square:
-                return phase < Mathf.PI ? 1f : -1f;
-
-            case WaveType.Saw:
-                return (phase / Mathf.PI) - 1f; // -1..1
-
+            case WaveType.Sine: return Mathf.Sin(phase);
+            case WaveType.Square: return phase < Mathf.PI ? 1f : -1f;
+            case WaveType.Saw: return (phase / Mathf.PI) - 1f;
             case WaveType.Triangle:
                 float saw = (phase / Mathf.PI) - 1f;
                 return 2f * (Mathf.Abs(saw) - 0.5f);
-
-            default:
-                return 0f;
         }
+        return 0f;
     }
 }
